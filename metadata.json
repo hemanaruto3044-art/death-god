@@ -1,0 +1,6 @@
+{
+  "name": "DEATH GOD",
+  "description": "A powerful Web Voice Calling application featuring guest login, unique UIDs, Agora RTC calling, and background notification support.",
+  "requestFramePermissions": ["microphone", "notifications"],
+  "majorCapabilities": ["realtime", "voice_communication"]
+}

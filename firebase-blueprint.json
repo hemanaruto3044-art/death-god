@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and connectivity data",
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "description": "Guest display name"
+        },
+        "displayUid": {
+          "type": "string",
+          "description": "5-digit unique numeric ID"
+        },
+        "fcmToken": {
+          "type": "string",
+          "description": "Firebase Cloud Messaging token"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "URL to profile picture"
+        },
+        "blockedUids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of blocked display UIDs"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update timestamp"
+        }
+      },
+      "required": ["displayName", "displayUid", "updatedAt"]
+    },
+    "CallHistory": {
+      "title": "CallHistory",
+      "description": "Record of a call",
+      "type": "object",
+      "properties": {
+        "callerUid": { "type": "string" },
+        "callerName": { "type": "string" },
+        "targetUid": { "type": "string" },
+        "targetName": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "duration": { "type": "number", "description": "Call duration in seconds" },
+        "type": { "type": "string", "enum": ["incoming", "outgoing"] }
+      },
+      "required": ["callerUid", "targetUid", "timestamp", "type"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Primary user profiles"
+    },
+    "/uids/{displayUid}": {
+      "schema": "User",
+      "description": "Lookup mapping from 5-digit UID to user data"
+    },
+    "/users/{userId}/history/{callId}": {
+      "schema": "CallHistory",
+      "description": "Call history records for a specific user"
+    }
+  }
+}

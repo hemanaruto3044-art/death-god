@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 3. Path Variable Hardening & Global Primitives
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function getProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // 2. Validation Blueprints
+    function isValidUser(data) {
+      return data.keys().hasAll(['displayName', 'displayUid', 'updatedAt'])
+        && data.keys().size() <= 13 // Allow optional fields like fcmToken, status, isMuted, photoURL, blockedUids
+        && data.displayName is string && data.displayName.size() > 0 && data.displayName.size() <= 50
+        && data.displayUid is string && data.displayUid.matches('^[0-9]{5}$')
+        && (data.get('fcmToken', '') is string && data.get('fcmToken', '').size() <= 1024)
+        && (data.get('photoURL', '') is string && data.get('photoURL', '').size() <= 2048)
+        && (data.get('blockedUids', []) is list)
+        && data.updatedAt == request.time;
+    }
+
+    // Checking if a caller is blocked by the target user
+    function isCallerBlocked(targetDisplayUid, callerDisplayUid) {
+      // Find the target's internal userId via the /uids collection
+      let targetUserId = get(/databases/$(database)/documents/uids/$(targetDisplayUid)).data.ownerId;
+      // Fetch target's actual user profile
+      let targetProfile = get(/databases/$(database)/documents/users/$(targetUserId)).data;
+      // Check if caller's display UID is in target's blocked list
+      return callerDisplayUid in targetProfile.get('blockedUids', []);
+    }
+
+    // 1. Master Gate (Relational Sync)
+    match /users/{userId} {
+      allow get: if isSignedIn(); // Allow searching for other users to get their display info
+      allow list: if isSignedIn(); // Allow searching users and contacts list queries
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && isValidUser(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'fcmToken', 'updatedAt', 'displayUid', 'status', 'isMuted', 'photoURL', 'blockedUids']);
+      allow delete: if isOwner(userId);
+    }
+
+    match /uids/{displayUid} {
+      // 8. Secure List Queries
+      allow get: if isSignedIn(); // Crucial for dialing by UID
+      allow list: if false;
+
+      // Ensure that when a UID is created/updated, it points to the correct owner
+      function isCorrectOwner(data) {
+        return data.get('ownerId', '') == request.auth.uid; // We'll add ownerId to the mapping
+      }
+
+      allow create: if isSignedIn() && isValidId(displayUid) && incoming().displayUid == displayUid;
+      allow update: if isSignedIn() && isValidId(displayUid) && incoming().displayUid == displayUid;
+      allow delete: if false; // UIDs are persistent for the session
+    }
+
+    match /calls/{displayUid} {
+      // displayUid is the target user's 5-digit UID
+      allow get, update, delete: if isSignedIn() && (
+        getProfile().displayUid == displayUid || 
+        (resource != null && resource.data.callerUid == getProfile().displayUid)
+      );
+      allow create: if isSignedIn() 
+        && incoming().callerUid == getProfile().displayUid
+        && !isCallerBlocked(displayUid, incoming().callerUid);
+    }
+
+    match /users/{userId}/history/{callId} {
+      allow read, create: if isOwner(userId);
+      allow update, delete: if false;
+    }
+  }
+}
