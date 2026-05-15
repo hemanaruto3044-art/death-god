@@ -6,7 +6,7 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // 3. Path Variable Hardening & Global Primitives
+    // Primitives
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -18,61 +18,55 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    // 2. Validation Blueprints
+    // Validation Blueprints
     function isValidUser(data) {
       return data.keys().hasAll(['displayName', 'displayUid', 'updatedAt'])
-        && data.keys().size() <= 13 // Allow optional fields like fcmToken, status, isMuted, photoURL, blockedUids
+        && data.keys().size() <= 14 
         && data.displayName is string && data.displayName.size() > 0 && data.displayName.size() <= 50
         && data.displayUid is string && data.displayUid.matches('^[0-9]{5}$')
         && (data.get('fcmToken', '') is string && data.get('fcmToken', '').size() <= 1024)
         && (data.get('photoURL', '') is string && data.get('photoURL', '').size() <= 2048)
+        && (data.get('peerId', '') is string && data.get('peerId', '').size() <= 256)
         && (data.get('blockedUids', []) is list)
         && data.updatedAt == request.time;
     }
 
-    // Checking if a caller is blocked by the target user
     function isCallerBlocked(targetDisplayUid, callerDisplayUid) {
-      // Find the target's internal userId via the /uids collection
-      let targetUserId = get(/databases/$(database)/documents/uids/$(targetDisplayUid)).data.ownerId;
-      // Fetch target's actual user profile
-      let targetProfile = get(/databases/$(database)/documents/users/$(targetUserId)).data;
-      // Check if caller's display UID is in target's blocked list
-      return callerDisplayUid in targetProfile.get('blockedUids', []);
+      let uidPath = /databases/$(database)/documents/uids/$(targetDisplayUid);
+      let targetUserId = exists(uidPath) ? get(uidPath).data.ownerId : null;
+      let targetProfile = (targetUserId != null && exists(/databases/$(database)/documents/users/$(targetUserId))) 
+        ? get(/databases/$(database)/documents/users/$(targetUserId)).data : null;
+      return targetProfile != null && callerDisplayUid in targetProfile.get('blockedUids', []);
     }
 
-    // 1. Master Gate (Relational Sync)
     match /users/{userId} {
-      allow get: if isSignedIn(); // Allow searching for other users to get their display info
-      allow list: if isSignedIn(); // Allow searching users and contacts list queries
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
       allow create: if isOwner(userId) && isValidUser(incoming());
       allow update: if isOwner(userId) && isValidUser(incoming())
-        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'fcmToken', 'updatedAt', 'displayUid', 'status', 'isMuted', 'photoURL', 'blockedUids']);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'fcmToken', 'updatedAt', 'displayUid', 'status', 'isMuted', 'photoURL', 'blockedUids', 'peerId']);
       allow delete: if isOwner(userId);
     }
 
     match /uids/{displayUid} {
-      // 8. Secure List Queries
-      allow get: if isSignedIn(); // Crucial for dialing by UID
+      allow get: if isSignedIn();
       allow list: if false;
-
-      // Ensure that when a UID is created/updated, it points to the correct owner
-      function isCorrectOwner(data) {
-        return data.get('ownerId', '') == request.auth.uid; // We'll add ownerId to the mapping
-      }
-
-      allow create: if isSignedIn() && isValidId(displayUid) && incoming().displayUid == displayUid;
-      allow update: if isSignedIn() && isValidId(displayUid) && incoming().displayUid == displayUid;
-      allow delete: if false; // UIDs are persistent for the session
+      allow create, update: if isSignedIn() && isValidId(displayUid) && incoming().displayUid == displayUid && incoming().ownerId == request.auth.uid;
+      allow delete: if false;
     }
 
     match /calls/{displayUid} {
-      // displayUid is the target user's 5-digit UID
+      function isValidCall(data) {
+        return data.callerUid is string && data.callerName is string && data.channelName is string
+          && (data.get('callerPeerId', '') is string && data.get('callerPeerId', '').size() <= 256);
+      }
       allow get, update, delete: if isSignedIn() && (
         getProfile().displayUid == displayUid || 
         (resource != null && resource.data.callerUid == getProfile().displayUid)
       );
       allow create: if isSignedIn() 
         && incoming().callerUid == getProfile().displayUid
+        && isValidCall(incoming())
         && !isCallerBlocked(displayUid, incoming().callerUid);
     }
 

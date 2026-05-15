@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { PeerProvider } from './context/PeerContext';
 import { GuestLogin } from './components/GuestLogin';
 import { Dashboard } from './components/Dashboard';
 import { CallScreen } from './components/CallScreen';
@@ -8,7 +9,7 @@ import { CallState } from './types';
 function AppContent() {
   const { user, profile, loading, updateProfile } = useAuth();
   const [callState, setCallState] = useState<CallState>('idle');
-  const [activeCall, setActiveCall] = useState<{ targetUid: string; channelName: string; isCaller: boolean } | null>(null);
+  const [activeCall, setActiveCall] = useState<{ targetUid: string; channelName: string; isCaller: boolean; targetPeerId?: string } | null>(null);
 
   useEffect(() => {
     // Check URL parameters for direct join (from notification click)
@@ -17,17 +18,17 @@ function AppContent() {
     const caller = params.get('caller');
     
     if (channel && caller && profile) {
-      handleStartCall(caller, channel, false);
+      handleStartCall(caller, channel, undefined, false);
       // Clean URL
       window.history.replaceState({}, document.title, '/');
     }
   }, [profile]);
 
-  const handleStartCall = async (targetUid: string, channelName: string, isCaller = true) => {
+  const handleStartCall = async (targetUid: string, channelName: string, targetPeerId?: string, isCaller = true) => {
     if (profile) {
       await updateProfile({ status: 'busy' });
     }
-    setActiveCall({ targetUid, channelName, isCaller });
+    setActiveCall({ targetUid, channelName, isCaller, targetPeerId });
     setCallState('active');
   };
 
@@ -57,6 +58,7 @@ function AppContent() {
             channelName={activeCall.channelName}
             targetUid={activeCall.targetUid}
             isCaller={activeCall.isCaller}
+            targetPeerId={activeCall.targetPeerId}
             onEndCall={handleEndCall}
           />
         ) : (
@@ -70,7 +72,9 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <PeerProvider>
+        <AppContent />
+      </PeerProvider>
     </AuthProvider>
   );
 }

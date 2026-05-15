@@ -8,14 +8,16 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { signalIncomingCall, setupCallSignal, respondToCall, clearCallSignal, requestNotificationPermission } from '../services/notifications';
 import { motion, AnimatePresence } from 'motion/react';
 import { CallRecord, UserProfile } from '../types';
-import { Search, UserPlus } from 'lucide-react';
+import { Search, UserPlus, Volume2 } from 'lucide-react';
+import { usePeer } from '../context/PeerContext';
 
 interface DashboardProps {
-  onStartCall: (targetUid: string, channelName: string) => void;
+  onStartCall: (targetUid: string, channelName: string, targetPeerId?: string) => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ onStartCall }) => {
   const { profile, logout, updateProfile } = useAuth();
+  const { peerId } = usePeer();
   const [targetUid, setTargetUid] = useState('');
   const [incomingCall, setIncomingCall] = useState<any>(null);
   const [history, setHistory] = useState<CallRecord[]>([]);
@@ -158,8 +160,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartCall }) => {
       const ringtone = new Audio('https://assets.mixkit.co/active_storage/sfx/1359/1359-preview.mp3');
       let count = 0;
       
-      const playRingtone = () => {
-        ringtone.play().catch(e => console.error('Audio play failed:', e));
+      const playRingtone = async () => {
+        try {
+          await ringtone.play();
+        } catch (e) {
+          console.warn('Audio play auto-blocked by browser. User must interact first.', e);
+        }
         count++;
       };
 
@@ -205,12 +211,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartCall }) => {
       }
       const channelName = `call_${profile.displayUid}_to_${targetUid}`;
       try {
+        // Fetch target peerId
+        const q = query(collection(db, 'users'), where('displayUid', '==', targetUid));
+        const snap = await getDocs(q);
+        const targetProfile = snap.docs[0]?.data() as UserProfile | undefined;
+
         await signalIncomingCall(targetUid, {
           callerUid: profile.displayUid,
           callerName: profile.displayName,
-          channelName
+          channelName,
+          callerPeerId: peerId || undefined
         });
-        onStartCall(targetUid, channelName);
+        onStartCall(targetUid, channelName, targetProfile?.peerId);
       } catch (err: any) {
         if (err.message.includes('permission-denied')) {
           alert('Could not initiate call. You might be blocked by this user or the user does not exist.');
@@ -230,7 +242,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartCall }) => {
   const handleAnswer = async () => {
     if (incomingCall && profile) {
       await respondToCall(profile.displayUid, 'accepted');
-      onStartCall(incomingCall.callerUid, incomingCall.channelName);
+      onStartCall(incomingCall.callerUid, incomingCall.channelName, incomingCall.callerPeerId);
       setIncomingCall(null);
     }
   };

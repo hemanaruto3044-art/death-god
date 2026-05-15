@@ -44,7 +44,7 @@ export const setupCallSignal = (myUid: string, onIncomingCall: (data: any) => vo
   });
 };
 
-export const signalIncomingCall = async (targetUid: string, data: { callerUid: string; callerName: string; channelName: string }) => {
+export const signalIncomingCall = async (targetUid: string, data: { callerUid: string; callerName: string; channelName: string; callerPeerId?: string }) => {
   try {
     await setDoc(doc(db, 'calls', targetUid), {
       ...data,

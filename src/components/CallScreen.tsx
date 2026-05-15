@@ -7,16 +7,19 @@ import Peer, { MediaConnection } from 'peerjs';
 import { db } from '../services/firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from '../services/firestoreErrorHandler';
+import { usePeer } from '../context/PeerContext';
 
 interface CallScreenProps {
   channelName: string;
   targetUid: string;
   isCaller: boolean;
+  targetPeerId?: string;
   onEndCall: () => void;
 }
 
-export const CallScreen: React.FC<CallScreenProps> = ({ channelName, targetUid, isCaller, onEndCall }) => {
+export const CallScreen: React.FC<CallScreenProps> = ({ channelName, targetUid, isCaller, targetPeerId, onEndCall }) => {
   const { profile, updateProfile } = useAuth();
+  const { peer, isReady } = usePeer();
   const [isMuted, setIsMuted] = useState(false);
   const [remoteMuted, setRemoteMuted] = useState(false);
   const [remotePhotoURL, setRemotePhotoURL] = useState<string | null>(null);
@@ -24,7 +27,6 @@ export const CallScreen: React.FC<CallScreenProps> = ({ channelName, targetUid, 
   const [remoteUserJoined, setRemoteUserJoined] = useState(false);
   const [liveDuration, setLiveDuration] = useState(0);
   const startTime = useRef<number>(Date.now());
-  const peerRef = useRef<Peer | null>(null);
   const remoteStreamRef = useRef<HTMLAudioElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const callRef = useRef<MediaConnection | null>(null);
@@ -53,56 +55,9 @@ export const CallScreen: React.FC<CallScreenProps> = ({ channelName, targetUid, 
   };
 
   useEffect(() => {
-    if (!profile) return;
+    if (!profile || !peer || !isReady) return;
 
-    const initPeer = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        localStreamRef.current = stream;
-
-        const peer = new Peer(`deathgod_${profile.displayUid}`, {
-          debug: 2
-        });
-        peerRef.current = peer;
-
-        peer.on('open', (id) => {
-          console.log('Peer ID is: ' + id);
-          setConnectionState('CONNECTED');
-          
-          if (isCaller) {
-            // Give a small delay to ensure the remote peer is ready
-            setTimeout(() => {
-              const call = peer.call(`deathgod_${targetUid}`, stream);
-              setupCall(call);
-            }, 1000);
-          }
-        });
-
-        peer.on('call', (call) => {
-          call.answer(stream);
-          setupCall(call);
-        });
-
-        peer.on('error', (err) => {
-          console.error('Peer error:', err);
-          if (err.type === 'peer-unavailable') {
-            console.warn('Target peer not yet online, will retry...');
-            return;
-          }
-          setConnectionState('ERROR');
-          alert(`Connection Error: ${err.type}. Please ensure microphone permission is granted.`);
-          onEndCall();
-        });
-
-        peer.on('disconnected', () => {
-          setConnectionState('DISCONNECTED');
-        });
-
-      } catch (err) {
-        console.error('Failed to get local stream or init peer:', err);
-        onEndCall();
-      }
-    };
+    let cleanupTracks = () => {};
 
     const setupCall = (call: MediaConnection) => {
       callRef.current = call;
@@ -110,7 +65,6 @@ export const CallScreen: React.FC<CallScreenProps> = ({ channelName, targetUid, 
       const timeout = setTimeout(() => {
         if (!remoteUserJoined) {
           console.warn('Call connection timeout');
-          // Don't hangup immediately, maybe target is slow
         }
       }, 15000);
 
@@ -130,19 +84,63 @@ export const CallScreen: React.FC<CallScreenProps> = ({ channelName, targetUid, 
       call.on('close', () => {
         clearTimeout(timeout);
         setRemoteUserJoined(false);
-        handleHangup();
+        onEndCall();
       });
 
       call.on('error', (err) => {
         clearTimeout(timeout);
         console.error('Call error:', err);
-        alert('Call failed to establish. Please try again.');
-        handleHangup();
+        onEndCall();
       });
     };
 
-    initPeer();
+    const initMedia = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        localStreamRef.current = stream;
+        cleanupTracks = () => {
+          stream.getTracks().forEach(track => track.stop());
+        };
 
+        if (isCaller && targetPeerId) {
+          console.log('Initiating P2P call to', targetPeerId);
+          setTimeout(() => {
+            if (peer) {
+              const call = peer.call(targetPeerId, stream);
+              setupCall(call);
+            }
+          }, 500);
+        }
+
+        const handleIncomingCall = (call: MediaConnection) => {
+          console.log('Answering incoming P2P call');
+          call.answer(stream);
+          setupCall(call);
+        };
+
+        peer.on('call', handleIncomingCall);
+
+        return () => {
+          peer.off('call', handleIncomingCall);
+          cleanupTracks();
+        };
+      } catch (err) {
+        console.error('Failed to get local stream:', err);
+        setConnectionState('ERROR');
+        alert('Microphone access denied. Please enable it to use calls.');
+        onEndCall();
+      }
+    };
+
+    initMedia();
+
+    return () => {
+      if (callRef.current) callRef.current.close();
+      cleanupTracks();
+    };
+  }, [profile, peer, isReady, isCaller, targetPeerId, onEndCall]);
+
+  useEffect(() => {
     // Listen to remote user profile (mute status, photo)
     const q = query(collection(db, 'users'), where('displayUid', '==', targetUid));
     const unsubscribeRemote = onSnapshot(q, (snapshot) => {
@@ -156,18 +154,13 @@ export const CallScreen: React.FC<CallScreenProps> = ({ channelName, targetUid, 
     });
 
     return () => {
-      if (callRef.current) callRef.current.close();
-      if (peerRef.current) peerRef.current.destroy();
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => track.stop());
-      }
       unsubscribeRemote();
       updateProfile({ isMuted: false });
       if (!isCaller && profile?.displayUid) {
         clearCallSignal(profile.displayUid);
       }
     };
-  }, [profile?.displayUid, targetUid]);
+  }, [profile?.displayUid, targetUid, isCaller, updateProfile]);
 
   const handleHangup = async () => {
     const duration = Math.floor((Date.now() - startTime.current) / 1000);

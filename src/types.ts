@@ -7,6 +7,7 @@ export interface UserProfile {
   status?: 'online' | 'offline' | 'busy';
   photoURL?: string;
   blockedUids?: string[];
+  peerId?: string;
   updatedAt: any;
 }
 
@@ -15,6 +16,7 @@ export interface CallInfo {
   targetUid: string;
   callerUid: string;
   callerName: string;
+  callerPeerId?: string;
 }
 
 export interface CallRecord {
