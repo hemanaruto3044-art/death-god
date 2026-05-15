@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import { getMessaging } from 'firebase/messaging';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -13,7 +13,6 @@ export const messaging = typeof window !== 'undefined' ? getMessaging(app) : nul
 
 // Validate Connection to Firestore
 if (typeof window !== 'undefined') {
-  const { doc, getDocFromServer } = require('firebase/firestore');
   const testConnection = async () => {
     try {
       await getDocFromServer(doc(db, 'test', 'connection'));
