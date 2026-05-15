@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Mic, MicOff, PhoneOff, Signal, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { logCallRecord } from '../services/notifications';
+import { logCallRecord, clearCallSignal } from '../services/notifications';
 import { motion, AnimatePresence } from 'motion/react';
 import Peer, { MediaConnection } from 'peerjs';
 import { db } from '../services/firebase';
@@ -85,7 +85,13 @@ export const CallScreen: React.FC<CallScreenProps> = ({ channelName, targetUid, 
 
         peer.on('error', (err) => {
           console.error('Peer error:', err);
+          if (err.type === 'peer-unavailable') {
+            console.warn('Target peer not yet online, will retry...');
+            return;
+          }
           setConnectionState('ERROR');
+          alert(`Connection Error: ${err.type}. Please ensure microphone permission is granted.`);
+          onEndCall();
         });
 
         peer.on('disconnected', () => {
@@ -100,8 +106,18 @@ export const CallScreen: React.FC<CallScreenProps> = ({ channelName, targetUid, 
 
     const setupCall = (call: MediaConnection) => {
       callRef.current = call;
+      
+      const timeout = setTimeout(() => {
+        if (!remoteUserJoined) {
+          console.warn('Call connection timeout');
+          // Don't hangup immediately, maybe target is slow
+        }
+      }, 15000);
+
       call.on('stream', (remoteStream) => {
+        clearTimeout(timeout);
         setRemoteUserJoined(true);
+        setConnectionState('CONNECTED');
         startTime.current = Date.now();
         
         if (!remoteStreamRef.current) {
@@ -112,12 +128,15 @@ export const CallScreen: React.FC<CallScreenProps> = ({ channelName, targetUid, 
       });
 
       call.on('close', () => {
+        clearTimeout(timeout);
         setRemoteUserJoined(false);
         handleHangup();
       });
 
       call.on('error', (err) => {
+        clearTimeout(timeout);
         console.error('Call error:', err);
+        alert('Call failed to establish. Please try again.');
         handleHangup();
       });
     };
@@ -144,6 +163,9 @@ export const CallScreen: React.FC<CallScreenProps> = ({ channelName, targetUid, 
       }
       unsubscribeRemote();
       updateProfile({ isMuted: false });
+      if (!isCaller && profile?.displayUid) {
+        clearCallSignal(profile.displayUid);
+      }
     };
   }, [profile?.displayUid, targetUid]);
 

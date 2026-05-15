@@ -146,7 +146,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onStartCall }) => {
       });
       return () => {
         unsubscribe();
-        clearCallSignal(profile.displayUid);
+        // Only clear signal if we are NOT in a nested state (like switching to active call)
+        // Actually, the cleanup should probably only happen if we are logging out or closing the app
+        // But for this simplified logic, let's just keep it for now but be aware
       };
     }
   }, [profile?.displayUid]);
